@@ -179,4 +179,23 @@ def main():
                 pass
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, SystemExit):
+        sys.exit(0)
+    except Exception as e:
+        import traceback
+        err_msg = traceback.format_exc()
+        try:
+            from logger_util import get_system_logger
+            logger = get_system_logger()
+            logger.error(f"Fatal Startup Crash: {err_msg}", component="CRASH")
+        except Exception:
+            pass
+        log_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "fti_fatal_error.log")
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] FATAL CRASH:\n{err_msg}\n")
+        except Exception:
+            pass
+        sys.exit(1)

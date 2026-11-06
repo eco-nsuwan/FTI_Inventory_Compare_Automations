@@ -10,6 +10,10 @@ echo   Clean Business Edition (Auto-Detect Free Port)
 echo ========================================================
 echo.
 
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+    set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
+)
+
 where python >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Python not found in system PATH.
