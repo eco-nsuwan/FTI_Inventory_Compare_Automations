@@ -29,6 +29,8 @@ def test_manual_compare_and_spreadsheet_workflow():
         if os.path.exists(p1): return p1
         p2 = os.path.join(os.path.dirname(BASE_DIR), fname)
         if os.path.exists(p2): return p2
+        p3 = os.path.join(os.path.dirname(BASE_DIR), "Inventory_Compare_data", fname)
+        if os.path.exists(p3): return p3
         return p1
 
     base_master = find_file("0-FTI_asset_HWSWOth.xlsx")
