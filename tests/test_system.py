@@ -236,8 +236,13 @@ def test_debounced_autosave():
     # Debounce delay is 0.2s; immediately checking shouldn't have file written yet
     assert not os.path.exists(test_path)
 
-    time.sleep(0.3)
-    assert os.path.exists(test_path)
+    # Wait for debounced write to complete (up to 2.0s for disk fsync)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if os.path.exists(test_path):
+            break
+        time.sleep(0.05)
+    assert os.path.exists(test_path), "Debounced autosave did not write file within 2.0s"
 
     comparator.flush_autosave()
     assert os.path.exists(test_path)

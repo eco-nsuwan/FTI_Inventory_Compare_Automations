@@ -113,6 +113,8 @@ def init_app_session():
             candidates = [
                 os.path.join(BASE_DIR, fname),
                 os.path.join(os.path.dirname(BASE_DIR), fname),
+                os.path.join(os.path.dirname(BASE_DIR), "Inventory_Compare_data", fname),
+                os.path.join(BASE_DIR, "Inventory_Compare_data", fname),
                 os.path.join(os.getcwd(), fname),
             ]
             for c in candidates:
