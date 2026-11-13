@@ -191,11 +191,19 @@ async def get_heartbeat():
 async def notify_client_unloading():
     global unloading_time
     unloading_time = datetime.datetime.now().timestamp()
+    try:
+        comparator.flush_autosave()
+    except Exception:
+        pass
     return {"status": "acknowledged", "time": unloading_time}
 
 @app.post("/api/shutdown")
 async def request_shutdown(force: bool = False):
     global server_ref
+    try:
+        comparator.flush_autosave()
+    except Exception:
+        pass
     if force and server_ref is not None:
         logger.info("Explicit shutdown requested by user.", component="SYSTEM")
         server_ref.should_exit = True

@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import copy
+import threading
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 import numpy as np
@@ -192,6 +193,10 @@ class InventoryComparator:
         self.hw_filename: Optional[str] = None
         self.sw_filename: Optional[str] = None
         self.ups_filename: Optional[str] = None
+
+        # Debounced Autosave Concurrency Controls (500ms default)
+        self._autosave_timer: Optional[threading.Timer] = None
+        self._autosave_lock = threading.RLock()
 
     def load_master(self, filepath_or_df) -> int:
         """Load and index the master ERP file. Marks all loaded categories as 'stale'."""
@@ -913,48 +918,69 @@ class InventoryComparator:
             "summary": self.summary
         }
 
-    def autosave(self, path: Optional[str] = None):
-        """Persist session state to disk atomically."""
+    def autosave(self, path: Optional[str] = None, force_immediate: bool = False, delay: float = 0.5):
+        """Persist session state to disk atomically with smart debouncing (500ms default)."""
         if path:
             self.autosave_path = path
         if not self.autosave_path:
             return
 
-        try:
-            filenames = {
-                "master": getattr(self, "master_filename", None),
-                "hw": getattr(self, "hw_filename", None),
-                "sw": getattr(self, "sw_filename", None),
-                "ups": getattr(self, "ups_filename", None)
-            }
-            data = {
-                "version": "2.0",
-                "category_states": self.category_states,
-                "columns": self.columns,
-                "records": self.records,
-                "master_dict": self.master_dict,
-                "summary": self.summary,
-                "changelog": self.changelog[-200:],
-                "undo_stack": self.undo_stack,
-                "redo_stack": self.redo_stack,
-                "filenames": filenames,
-                "saved_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            dirname = os.path.dirname(os.path.abspath(self.autosave_path))
-            if dirname:
-                os.makedirs(dirname, exist_ok=True)
-            tmp_path = self.autosave_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, default=str)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, self.autosave_path)
-        except Exception as e:
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+                self._autosave_timer = None
+
+            if force_immediate:
+                self._write_autosave_to_disk()
+            else:
+                self._autosave_timer = threading.Timer(delay, self._write_autosave_to_disk)
+                self._autosave_timer.daemon = True
+                self._autosave_timer.start()
+
+    def flush_autosave(self):
+        """Ensure any pending debounced autosave is committed to disk immediately."""
+        self.autosave(force_immediate=True)
+
+    def _write_autosave_to_disk(self):
+        """Internal atomic write to disk."""
+        with self._autosave_lock:
+            if not self.autosave_path:
+                return
             try:
-                from logger_util import get_system_logger
-                get_system_logger().error(f"Autosave failed: {e}", component="AUTOSAVE", exc_info=True)
-            except Exception:
-                pass
+                filenames = {
+                    "master": getattr(self, "master_filename", None),
+                    "hw": getattr(self, "hw_filename", None),
+                    "sw": getattr(self, "sw_filename", None),
+                    "ups": getattr(self, "ups_filename", None)
+                }
+                data = {
+                    "version": "2.0",
+                    "category_states": self.category_states,
+                    "columns": self.columns,
+                    "records": self.records,
+                    "master_dict": self.master_dict,
+                    "summary": self.summary,
+                    "changelog": self.changelog[-200:],
+                    "undo_stack": self.undo_stack,
+                    "redo_stack": self.redo_stack,
+                    "filenames": filenames,
+                    "saved_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                dirname = os.path.dirname(os.path.abspath(self.autosave_path))
+                if dirname:
+                    os.makedirs(dirname, exist_ok=True)
+                tmp_path = self.autosave_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, default=str)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, self.autosave_path)
+            except Exception as e:
+                try:
+                    from logger_util import get_system_logger
+                    get_system_logger().error(f"Autosave failed: {e}", component="AUTOSAVE", exc_info=True)
+                except Exception:
+                    pass
 
     def load_autosave(self, path: str) -> bool:
         """Restore session from autosave file if exists and is valid 2.0 structure."""

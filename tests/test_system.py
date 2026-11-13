@@ -223,5 +223,32 @@ def test_manual_compare_and_spreadsheet_workflow():
 
     print("\n[SUCCESS] All Manual Compare, Spreadsheet Inspector, and 4-Tab Export tests PASSED successfully!")
 
+def test_debounced_autosave():
+    import time
+    test_path = os.path.join(BASE_DIR, "output", "test_autosave.json")
+    if os.path.exists(test_path):
+        try:
+            os.remove(test_path)
+        except Exception:
+            pass
+
+    comparator.autosave(path=test_path, delay=0.2)
+    # Debounce delay is 0.2s; immediately checking shouldn't have file written yet
+    assert not os.path.exists(test_path)
+
+    time.sleep(0.3)
+    assert os.path.exists(test_path)
+
+    comparator.flush_autosave()
+    assert os.path.exists(test_path)
+
+    if os.path.exists(test_path):
+        try:
+            os.remove(test_path)
+        except Exception:
+            pass
+    print("\n[SUCCESS] Debounced autosave verified successfully!")
+
 if __name__ == "__main__":
     test_manual_compare_and_spreadsheet_workflow()
+    test_debounced_autosave()
