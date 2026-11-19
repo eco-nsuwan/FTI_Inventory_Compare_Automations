@@ -1,6 +1,7 @@
 import os
 import io
 import copy
+import math
 import zipfile
 import tempfile
 from typing import List, Dict, Any, Optional
@@ -8,6 +9,30 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import pandas as pd
+
+_EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sanitize_excel_value(val: Any) -> Any:
+    """
+    Neutralize Excel formula injection payloads on string values by prefixing with `'`.
+    Preserves None, booleans, ints, floats, and plain finite numeric strings like '-123.45'.
+    """
+    if val is None or isinstance(val, (bool, int, float)):
+        return val
+    if isinstance(val, str):
+        if not val:
+            return val
+        if val[0] in _EXCEL_FORMULA_PREFIXES:
+            if val[0] in ("-", "+"):
+                try:
+                    num = float(val)
+                    if math.isfinite(num):
+                        return val
+                except ValueError:
+                    pass
+            return "'" + val
+    return val
 
 # Color codes matching HW_Mismatch_Report.xlsx
 FILL_BOTH_MISMATCH = PatternFill(start_color="FFFFCCCC", end_color="FFFFCCCC", fill_type="solid")  # Soft red
@@ -66,7 +91,7 @@ class ReportGenerator:
 
         # Write headers
         for col_idx, col_name in enumerate(cols, start=1):
-            c = ws.cell(row=1, column=col_idx, value=str(col_name))
+            c = ws.cell(row=1, column=col_idx, value=sanitize_excel_value(str(col_name)))
             c.font = FONT_HEADER
             c.fill = header_fill
             c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -81,7 +106,7 @@ class ReportGenerator:
                 val = row[col_name]
                 if pd.isna(val):
                     val = ""
-                cell = ws.cell(row=r_pos, column=c_idx, value=val)
+                cell = ws.cell(row=r_pos, column=c_idx, value=sanitize_excel_value(val))
                 cell.font = FONT_REGULAR
                 cell.border = THIN_BORDER
                 cell.alignment = Alignment(vertical="center")
@@ -149,9 +174,9 @@ class ReportGenerator:
 
         for m_name, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
             pct = f"{(count / total_mismatches * 100):.1f}%" if total_mismatches > 0 else "0.0%"
-            c1 = ws_summary.cell(row=curr_row, column=1, value=m_name)
-            c2 = ws_summary.cell(row=curr_row, column=2, value=count)
-            c3 = ws_summary.cell(row=curr_row, column=3, value=pct)
+            c1 = ws_summary.cell(row=curr_row, column=1, value=sanitize_excel_value(m_name))
+            c2 = ws_summary.cell(row=curr_row, column=2, value=sanitize_excel_value(count))
+            c3 = ws_summary.cell(row=curr_row, column=3, value=sanitize_excel_value(pct))
 
             c2.alignment = Alignment(horizontal="right")
             c3.alignment = Alignment(horizontal="right")
@@ -261,7 +286,7 @@ class ReportGenerator:
                 fill, font_color = get_row_fill_and_font(m_type)
 
                 for c_idx, val in enumerate(row_vals, start=1):
-                    cell = ws.cell(row=r_idx, column=c_idx, value=val)
+                    cell = ws.cell(row=r_idx, column=c_idx, value=sanitize_excel_value(val))
                     cell.font = FONT_REGULAR
                     cell.border = THIN_BORDER
                     cell.alignment = Alignment(vertical="center")
@@ -451,7 +476,7 @@ class ReportGenerator:
             fill_m, font_m = get_row_fill_and_font(m_type)
 
             for c_idx, val in enumerate(row_vals, start=1):
-                cell = ws_comp.cell(row=row_num, column=c_idx, value=val)
+                cell = ws_comp.cell(row=row_num, column=c_idx, value=sanitize_excel_value(val))
                 cell.font = FONT_REGULAR
                 cell.border = THIN_BORDER
                 cell.alignment = Alignment(vertical="center")

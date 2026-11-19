@@ -103,7 +103,7 @@ def main():
     port = find_free_port(start_port=8000, max_port=8099)
     url = f"http://127.0.0.1:{port}"
 
-    from app import app, set_server_instance, get_last_heartbeat, get_unloading_time
+    from app import app, comparator, set_server_instance, get_last_heartbeat, get_unloading_time
     import uvicorn
 
     config = uvicorn.Config(
@@ -171,6 +171,10 @@ def main():
         logger.info("Shutdown signal received. Exiting...", component="MAIN")
         server.should_exit = True
     finally:
+        try:
+            comparator.flush_autosave()
+        except Exception:
+            pass
         server.should_exit = True
         if browser_proc is not None and browser_proc.poll() is None:
             try:

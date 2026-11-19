@@ -1453,14 +1453,13 @@ body {
 
 .workspace-unified-ribbon .category-kpi-bar,
 .ribbon-kpi-center {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: center !important;
+    flex-direction: row;
+    align-items: center;
     justify-content: center;
     gap: 8px;
-    flex-wrap: nowrap !important;
+    flex-wrap: nowrap;
     flex-shrink: 0;
-    margin: 0 auto !important;
+    margin: 0 auto;
 }
 
 .kpi-ribbon-pill {

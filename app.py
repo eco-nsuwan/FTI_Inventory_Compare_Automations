@@ -18,8 +18,11 @@ if sys.stderr is None:
 elif not hasattr(sys.stderr, "isatty"):
     sys.stderr.isatty = lambda: False
 
+import json
 import time
+import asyncio
 import datetime
+from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
@@ -32,27 +35,6 @@ from engine.report_generator import ReportGenerator
 from logger_util import get_system_logger, PRIMARY_LOG_FILE
 
 logger = get_system_logger()
-
-app = FastAPI(title="FTI IT Asset Inventory Compare System", version="2.0.0")
-
-# Request Logging Middleware (Full Debug)
-@app.middleware("http")
-async def log_requests_middleware(request: Request, call_next):
-    start_time = time.time()
-    path = request.url.path
-    is_heartbeat = path in ("/api/heartbeat", "/api/client_unloading")
-    client_ip = request.client.host if request.client else "127.0.0.1"
-
-    try:
-        response = await call_next(request)
-        elapsed_ms = (time.time() - start_time) * 1000
-        if not is_heartbeat:
-            logger.info(f"{request.method:4} {path:22} -> {response.status_code} [{elapsed_ms:.1f}ms] (Client: {client_ip})", component="HTTP")
-        return response
-    except Exception as e:
-        elapsed_ms = (time.time() - start_time) * 1000
-        logger.error(f"{request.method:4} {path:22} -> FAILED: {e} [{elapsed_ms:.1f}ms]", component="HTTP", exc_info=True)
-        raise
 
 # Multi-path search for base data directory
 candidate_dirs = [
@@ -73,7 +55,106 @@ if getattr(sys, 'frozen', False):
     BUNDLE_DIR = getattr(sys, '_MEIPASS', EXE_DIR)
     STATIC_DIR = os.path.join(BUNDLE_DIR, "static") if os.path.exists(os.path.join(BUNDLE_DIR, "static")) else os.path.join(EXE_DIR, "static")
 else:
-    STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+    STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
+
+
+def _load_version_metadata() -> Dict[str, Any]:
+    """Load version.json from the app directory, bundle, or static directory."""
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json"),
+        os.path.join(BUNDLE_DIR, "version.json"),
+        os.path.join(BASE_DIR, "version.json"),
+        os.path.join(STATIC_DIR, "version.json"),
+    ]
+    seen = set()
+    for v_path in candidates:
+        norm = os.path.normcase(os.path.abspath(v_path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if os.path.exists(v_path):
+            try:
+                with open(v_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to read version metadata from {v_path}: {e}", component="SYSTEM", exc_info=True)
+    return {
+        "version": "2.1.0",
+        "build_number": 1,
+        "build_date": "2026.11.01",
+        "compiled_at": "2026-11-01 14:35:00",
+        "display_version": "v2.1.0 (Build 2026.11.01-01)"
+    }
+
+
+_INITIAL_VERSION_META = _load_version_metadata()
+app = FastAPI(title="FTI IT Asset Inventory Compare System", version=_INITIAL_VERSION_META.get("version", "2.1.0"))
+
+_ALLOWED_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
+_STATE_CHANGING_METHODS = {"POST", "PATCH", "DELETE", "PUT"}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _extract_host_without_port(host_header: str) -> str:
+    raw = (host_header or "").strip().lower()
+    if not raw:
+        return ""
+    if raw.startswith("["):
+        end = raw.find("]")
+        return raw[1:end] if end != -1 else raw
+    return raw.split(":", 1)[0]
+
+
+@app.middleware("http")
+async def local_csrf_and_host_middleware(request: Request, call_next):
+    """Enforce localhost Host header and Origin/Referer CSRF check on state-changing routes."""
+    host_header = request.headers.get("host", "")
+    hostname = _extract_host_without_port(host_header)
+    if hostname and hostname not in _ALLOWED_LOCAL_HOSTS:
+        logger.warn(f"Rejected request with disallowed Host header: {host_header}", component="SECURITY")
+        return JSONResponse({"detail": "Forbidden: Disallowed Host header"}, status_code=403)
+
+    if request.method.upper() in _STATE_CHANGING_METHODS:
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+        if origin is not None:
+            if origin.strip().lower() == "null":
+                logger.warn(f"Rejected cross-origin request with null Origin on {request.url.path}", component="SECURITY")
+                return JSONResponse({"detail": "Forbidden: Cross-origin request rejected"}, status_code=403)
+            parsed = urlparse(origin)
+            origin_host = (parsed.hostname or "").lower()
+            if origin_host not in _ALLOWED_LOCAL_HOSTS:
+                logger.warn(f"Rejected cross-origin request from Origin={origin} on {request.url.path}", component="SECURITY")
+                return JSONResponse({"detail": "Forbidden: Cross-origin request rejected"}, status_code=403)
+        elif referer is not None:
+            parsed = urlparse(referer)
+            ref_host = (parsed.hostname or "").lower()
+            if ref_host not in _ALLOWED_LOCAL_HOSTS:
+                logger.warn(f"Rejected cross-origin request from Referer={referer} on {request.url.path}", component="SECURITY")
+                return JSONResponse({"detail": "Forbidden: Cross-origin request rejected"}, status_code=403)
+
+    return await call_next(request)
+
+
+# Request Logging Middleware (Full Debug)
+@app.middleware("http")
+async def log_requests_middleware(request: Request, call_next):
+    start_time = time.time()
+    path = request.url.path
+    is_heartbeat = path in ("/api/heartbeat", "/api/client_unloading")
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time.time() - start_time) * 1000
+        if not is_heartbeat:
+            logger.info(f"{request.method:4} {path:22} -> {response.status_code} [{elapsed_ms:.1f}ms] (Client: {client_ip})", component="HTTP")
+        return response
+    except Exception as e:
+        elapsed_ms = (time.time() - start_time) * 1000
+        logger.error(f"{request.method:4} {path:22} -> FAILED: {e} [{elapsed_ms:.1f}ms]", component="HTTP", exc_info=True)
+        raise
 
 # Mount static files
 if not os.path.exists(STATIC_DIR):
@@ -244,22 +325,7 @@ async def serve_index():
 @app.get("/api/version")
 async def get_system_version():
     """Retrieve application version and build metadata."""
-    v_path = os.path.join(BASE_DIR, "version.json")
-    if not os.path.exists(v_path):
-        v_path = os.path.join(STATIC_DIR, "version.json")
-    if os.path.exists(v_path):
-        try:
-            with open(v_path, "r", encoding="utf-8") as f:
-                return JSONResponse(json.load(f))
-        except Exception:
-            pass
-    return JSONResponse({
-        "version": "2.1.0",
-        "build_number": 1,
-        "build_date": "2026.11.01",
-        "compiled_at": "2026-11-01 14:35:00",
-        "display_version": "v2.1.0 (Build 2026.11.01-01)"
-    })
+    return JSONResponse(_load_version_metadata())
 
 # =========================================================================
 # V2 System State & Comparison API
@@ -309,7 +375,7 @@ async def get_summary():
     return JSONResponse(comparator.summary)
 
 @app.post("/api/compare/{category}")
-async def compare_single_category(category: str, reset_to_orig: bool = Query(False, description="Reset automatic cells to original file values before comparing")):
+def compare_single_category(category: str, reset_to_orig: bool = Query(False, description="Reset automatic cells to original file values before comparing")):
     """Trigger explicit comparison for a specific category."""
     if category not in ("hw", "sw", "ups"):
         raise HTTPException(status_code=400, detail="Category must be hw, sw, or ups")
@@ -332,7 +398,7 @@ async def compare_single_category(category: str, reset_to_orig: bool = Query(Fal
     })
 
 @app.post("/api/compare-all")
-async def compare_all_categories(reset_to_orig: bool = Query(True, description="Reset automatic cells to original file values to get baseline comparison")):
+def compare_all_categories(reset_to_orig: bool = Query(True, description="Reset automatic cells to original file values to get baseline comparison")):
     """Trigger comparison across all 3 categories (HW, SW, UPS). Default reset_to_orig=True for baseline comparison."""
     if len(comparator.master_dict) == 0:
         raise HTTPException(status_code=400, detail="กรุณาอัปโหลดไฟล์หลัก ERP (Master) ก่อนทำการเปรียบเทียบ")
@@ -352,7 +418,7 @@ async def compare_all_categories(reset_to_orig: bool = Query(True, description="
     })
 
 @app.get("/api/grid/{category}")
-async def get_category_grid(
+def get_category_grid(
     category: str,
     filter_type: str = Query("all", description="all, mismatch, match, excluded, user_edited"),
     search: str = Query("", description="search query"),
@@ -363,8 +429,11 @@ async def get_category_grid(
     if category not in ("hw", "sw", "ups"):
         raise HTTPException(status_code=400, detail="Category must be hw, sw, or ups")
 
-    all_recs = comparator.records.get(category, [])
-    cols = comparator.columns.get(category, [])
+    with comparator._state_lock:
+        all_recs = list(comparator.records.get(category, []))
+        cols = list(comparator.columns.get(category, []))
+        cat_state = comparator.category_states.get(category, "empty")
+
     if not cols and all_recs:
         cols = list(all_recs[0]["cells"].keys())
 
@@ -406,28 +475,32 @@ async def get_category_grid(
     offset = (page - 1) * page_size
     paginated_recs = filtered[offset: offset + page_size]
 
+    # Build response copies without mutating comparator.records in-place
+    response_recs = []
     for r in paginated_recs:
         aid, emp_id, emp_name, dept, sn = comparator._get_key_fields(category, r.get("cells", {}))
-        r["asset_id"] = aid
-        r["it_emp_id"] = emp_id
-        r["it_emp_name"] = emp_name
-        r["it_dept"] = dept
-        r["it_sn"] = sn
+        rec_copy = dict(r)
+        rec_copy["asset_id"] = aid
+        rec_copy["it_emp_id"] = emp_id
+        rec_copy["it_emp_name"] = emp_name
+        rec_copy["it_dept"] = dept
+        rec_copy["it_sn"] = sn
+        response_recs.append(rec_copy)
 
     return JSONResponse({
         "category": category,
-        "category_state": comparator.category_states.get(category, "empty"),
+        "category_state": cat_state,
         "columns": cols,
         "total": total_count,
         "total_count": total_count,
         "page": page,
         "page_size": page_size,
         "total_pages": (total_count + page_size - 1) // page_size if total_count > 0 else 1,
-        "records": paginated_recs
+        "records": response_recs
     })
 
 @app.patch("/api/cell")
-async def update_cell_value(req: CellEditRequest):
+def update_cell_value(req: CellEditRequest):
     """Update a single cell in spreadsheet mode."""
     updated = comparator.update_cell(req.uid, req.column, req.value, user=req.user or "IT Officer")
     if not updated:
@@ -444,7 +517,7 @@ async def update_cell_value(req: CellEditRequest):
     })
 
 @app.post("/api/row/exclusion")
-async def toggle_row_exclusion(req: RowExclusionRequest):
+def toggle_row_exclusion(req: RowExclusionRequest):
     """Manually move row between active (Tab 3) and excluded (Tab 4)."""
     updated = comparator.set_row_exclusion(req.uid, req.exclude, user=req.user or "IT Officer")
     if not updated:
@@ -461,7 +534,7 @@ async def toggle_row_exclusion(req: RowExclusionRequest):
     })
 
 @app.post("/api/auto-fix/{category}")
-async def auto_fix_category(category: str):
+def auto_fix_category(category: str):
     """Run Auto-Fix on a specific category (or all) respecting user-edited cells."""
     if category not in ("hw", "sw", "ups", "all"):
         raise HTTPException(status_code=400, detail="Category must be hw, sw, ups, or all")
@@ -493,36 +566,62 @@ async def upload_files(
     file: UploadFile = File(...)
 ):
     """Upload new Excel file dynamically into 'loaded' state (does NOT auto-compare)."""
-    if not file.filename.endswith(('.xlsx', '.xls')):
+    # 1. Strict allowlist validation BEFORE reading or writing any bytes
+    if file_type not in ("master", "hw", "sw", "ups"):
+        raise HTTPException(status_code=400, detail="Invalid file_type. Must be master, hw, sw, or ups")
+
+    filename = file.filename or ""
+    lower_name = filename.lower()
+    if not lower_name.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
 
-    content = await file.read()
+    # 2. Enforce 50 MB max upload size
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded file exceeds 50 MB limit")
+
+    # 3. Validate file signature (magic bytes)
+    if lower_name.endswith(".xlsx"):
+        if not content.startswith(b"PK\x03\x04"):
+            raise HTTPException(status_code=400, detail="Invalid .xlsx file signature (expected ZIP/OOXML format)")
+    elif lower_name.endswith(".xls"):
+        if not content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+            raise HTTPException(status_code=400, detail="Invalid .xls file signature (expected legacy OLE2 Excel format)")
+
+    # 4. Offload blocking Excel parsing to worker thread
     try:
-        df = pd.read_excel(io.BytesIO(content))
+        df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content))
+    except ImportError as e:
+        raise HTTPException(status_code=400, detail=f"Legacy .xls reader is not installed; please convert to .xlsx ({e})")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {str(e)}")
 
+    # 5. Path traversal containment check before persisting source copy
+    sources_root = os.path.abspath(SOURCES_DIR)
+    src_target = os.path.abspath(os.path.join(sources_root, f"source_{file_type}.xlsx"))
+    if os.path.commonpath([sources_root, src_target]) != sources_root:
+        raise HTTPException(status_code=400, detail="Invalid file target path")
+
     try:
-        src_target = os.path.join(SOURCES_DIR, f"source_{file_type}.xlsx")
-        with open(src_target, "wb") as f_src:
-            f_src.write(content)
+        def _write_source():
+            with open(src_target, "wb") as f_src:
+                f_src.write(content)
+        await asyncio.to_thread(_write_source)
     except Exception as e_save:
         logger.warn(f"Could not persist uploaded file to sources: {e_save}", component="UPLOAD")
 
     if file_type == "master":
-        comparator.master_filename = file.filename
-        comparator.load_master(df)
+        comparator.master_filename = filename
+        await asyncio.to_thread(comparator.load_master, df)
         msg = f"โหลดไฟล์หลัก ERP สำเร็จ ({len(df):,} รายการ) — ทุกหมวดพร้อมสำหรับเปรียบเทียบใหม่"
-    elif file_type in ("hw", "sw", "ups"):
-        comparator.load_category(file_type, df, filename=file.filename)
-        msg = f"อัปโหลดไฟล์ {file_type.upper()} สำเร็จ ({len(df):,} รายการ) — พร้อมให้กดเปรียบเทียบ"
     else:
-        raise HTTPException(status_code=400, detail="Invalid file_type")
+        await asyncio.to_thread(comparator.load_category, file_type, df, filename)
+        msg = f"อัปโหลดไฟล์ {file_type.upper()} สำเร็จ ({len(df):,} รายการ) — พร้อมให้กดเปรียบเทียบ"
 
     return JSONResponse({
         "status": "success",
         "message": msg,
-        "filename": file.filename,
+        "filename": filename,
         "category_states": comparator.category_states,
         "summary": comparator.summary
     })
@@ -531,17 +630,17 @@ async def upload_files(
 # Google Workspace-style Undo, Redo, Version History & Session Reset
 # =========================================================================
 @app.post("/api/undo")
-async def undo_action():
+def undo_action():
     res = comparator.undo()
     return JSONResponse(res)
 
 @app.post("/api/redo")
-async def redo_action():
+def redo_action():
     res = comparator.redo()
     return JSONResponse(res)
 
 @app.get("/api/history")
-async def get_history_timeline():
+def get_history_timeline():
     return JSONResponse({
         "history": comparator.get_version_history(),
         "can_undo": len(comparator.undo_stack) > 0,
@@ -549,12 +648,12 @@ async def get_history_timeline():
     })
 
 @app.post("/api/rollback")
-async def rollback_to_version(req: RollbackRequest):
+def rollback_to_version(req: RollbackRequest):
     res = comparator.rollback_to_index(req.index)
     return JSONResponse(res)
 
 @app.post("/api/session/reset")
-async def reset_current_session():
+def reset_current_session():
     comparator.reset_session()
     return JSONResponse({
         "success": True,
@@ -601,7 +700,7 @@ async def get_session_status():
 # =========================================================================
 
 @app.get("/api/export/inventory/{category}")
-async def export_inventory_file(category: str):
+def export_inventory_file(category: str):
     """Download 4-tab reconciled inventory Excel file."""
     if category not in ("hw", "sw", "ups"):
         raise HTTPException(status_code=400, detail="Category must be hw, sw, or ups")
@@ -637,7 +736,7 @@ async def export_inventory_file(category: str):
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการสร้างไฟล์ Inventory: {str(e)}")
 
 @app.get("/api/export/inventory-all")
-async def export_all_inventories_zip():
+def export_all_inventories_zip():
     """Download all compared 4-tab inventory files in a ZIP archive."""
     try:
         any_compared = any(state == "compared" for state in comparator.category_states.values())
@@ -663,7 +762,7 @@ async def export_all_inventories_zip():
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการสร้างไฟล์ ZIP: {str(e)}")
 
 @app.get("/api/export/mismatch/{category}")
-async def export_mismatch_report_file(category: str):
+def export_mismatch_report_file(category: str):
     """Download dedicated Mismatch Report Excel file (e.g. HW_Mismatch_Report.xlsx)."""
     if category not in ("hw", "sw", "ups"):
         raise HTTPException(status_code=400, detail="Category must be hw, sw, or ups")
@@ -689,7 +788,7 @@ async def export_mismatch_report_file(category: str):
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการสร้างไฟล์ Mismatch Report: {str(e)}")
 
 @app.get("/api/export/mismatch-all")
-async def export_all_mismatch_report_file():
+def export_all_mismatch_report_file():
     """Download combined Mismatch Report Excel file across all categories."""
     any_compared = any(state == "compared" for state in comparator.category_states.values())
     if not any_compared:

@@ -1,6 +1,16 @@
 // FTI IT Asset Inventory Compare System - UI/UX Pro Max Engine (v2.0)
 // Complete Workspace Architecture: Dynamic Spreadsheet Inspector + Manual Compare
 
+function escapeHtml(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     // Application State
     const state = {
@@ -326,7 +336,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const res = await fetch(`/api/compare/${cat}`, { method: "POST" });
                 const d = await res.json();
                 if (!res.ok) throw new Error(d.detail || "การเปรียบเทียบล้มเหลว");
-                showToast(`เปรียบเทียบหมวด ${cat.toUpperCase()} สำเร็จ (ตรงกัน ${d.match_rate}%)`, "success");
+                const matchRate = d.category_summary?.match_rate ?? d.match_rate ?? 0;
+                showToast(`เปรียบเทียบหมวด ${cat.toUpperCase()} สำเร็จ (ตรงกัน ${matchRate}%)`, "success");
                 await fetchSystemState();
             } catch (err) {
                 showToast(`เกิดข้อผิดพลาด: ${err.message}`, "error");
@@ -768,7 +779,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await res.json();
             renderSpreadsheetGrid(data);
         } catch (e) {
-            elements.spreadsheetTbody.innerHTML = `<tr><td colspan="10" style="padding: 24px; text-align: center; color: red;">เกิดข้อผิดพลาดในการโหลดตาราง: ${e.message}</td></tr>`;
+            elements.spreadsheetTbody.innerHTML = `<tr><td colspan="10" style="padding: 24px; text-align: center; color: red;">เกิดข้อผิดพลาดในการโหลดตาราง: ${escapeHtml(e.message)}</td></tr>`;
         }
     }
 
@@ -797,7 +808,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <th class="col-sticky-2" style="width: 140px;">สถานะ</th>
             `;
             cols.forEach(col => {
-                thHtml += `<th>${col}</th>`;
+                thHtml += `<th>${escapeHtml(col)}</th>`;
             });
             elements.spreadsheetThead.innerHTML = `<tr>${thHtml}</tr>`;
         }
@@ -879,35 +890,36 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (mType.includes("ตัดจำหน่าย")) mTypeColor = "#ea580c";
                 if (mType.includes("ตรงกัน")) mTypeColor = "#16a34a";
 
+                const safeUid = escapeHtml(uid);
                 tbodyHtml += `
-                    <tr class="${rowClass}" data-uid="${uid}">
+                    <tr class="${rowClass}" data-uid="${safeUid}">
                         <td class="col-sticky-1" style="text-align: center; color: var(--text-muted);">${rowNum}</td>
                         <td class="col-sticky-2">${statusBadge}</td>
-                        <td style="font-family: var(--font-mono); font-weight: 600; color: var(--blue-primary);">${aid}</td>
-                        <td style="font-weight: 600; color: ${mTypeColor};">${mType}</td>
+                        <td style="font-family: var(--font-mono); font-weight: 600; color: var(--blue-primary);">${escapeHtml(aid)}</td>
+                        <td style="font-weight: 600; color: ${mTypeColor};">${escapeHtml(mType)}</td>
                         <td>
                             <div class="comp-box">
-                                <div class="comp-row"><span class="comp-label">รหัส:</span> <span class="comp-val ${diffs.includes('emp_id') ? 'diff-emp' : ''}">${itEmp}</span></div>
-                                <div class="comp-row"><span class="comp-label">ชื่อ:</span> <span class="comp-val">${itName}</span></div>
-                                <div class="comp-row"><span class="comp-label">แผนก:</span> <span class="comp-val ${diffs.includes('dept') ? 'diff-dept' : ''}">${itDept}</span></div>
+                                <div class="comp-row"><span class="comp-label">รหัส:</span> <span class="comp-val ${diffs.includes('emp_id') ? 'diff-emp' : ''}">${escapeHtml(itEmp)}</span></div>
+                                <div class="comp-row"><span class="comp-label">ชื่อ:</span> <span class="comp-val">${escapeHtml(itName)}</span></div>
+                                <div class="comp-row"><span class="comp-label">แผนก:</span> <span class="comp-val ${diffs.includes('dept') ? 'diff-dept' : ''}">${escapeHtml(itDept)}</span></div>
                             </div>
                         </td>
                         <td>
                             <div class="comp-box">
-                                <div class="comp-row"><span class="comp-label">รหัส:</span> <span class="comp-val">${axEmp}</span></div>
-                                <div class="comp-row"><span class="comp-label">ชื่อ:</span> <span class="comp-val">${axName}</span></div>
-                                <div class="comp-row"><span class="comp-label">แผนก:</span> <span class="comp-val">${axDept}</span></div>
-                                <div class="comp-row"><span class="comp-label">สถานะ:</span> <span class="comp-val" style="color: ${ax.is_scrapped ? '#ef4444' : 'inherit'}; font-weight: 600;">${axStatus}</span></div>
+                                <div class="comp-row"><span class="comp-label">รหัส:</span> <span class="comp-val">${escapeHtml(axEmp)}</span></div>
+                                <div class="comp-row"><span class="comp-label">ชื่อ:</span> <span class="comp-val">${escapeHtml(axName)}</span></div>
+                                <div class="comp-row"><span class="comp-label">แผนก:</span> <span class="comp-val">${escapeHtml(axDept)}</span></div>
+                                <div class="comp-row"><span class="comp-label">สถานะ:</span> <span class="comp-val" style="color: ${ax.is_scrapped ? '#ef4444' : 'inherit'}; font-weight: 600;">${escapeHtml(axStatus)}</span></div>
                             </div>
                         </td>
                         <td style="text-align: center;">
                             <div class="row-actions-group" style="justify-content: center;">
                                 ${ax.asset_id && !ax.is_scrapped && !isMatch ? `
-                                    <button class="btn btn-primary btn-sm btn-row-sync" data-uid="${uid}" title="ซิงค์ข้อมูลแถวนี้ให้ตรงกับ ERP ทันที">
+                                    <button class="btn btn-primary btn-sm btn-row-sync" data-uid="${safeUid}" title="ซิงค์ข้อมูลแถวนี้ให้ตรงกับ ERP ทันที">
                                         <i class="fa-solid fa-bolt"></i> ซิงค์ ERP
                                     </button>
                                 ` : (isMatch ? `<span style="font-size: 11px; color: #10b981; font-weight: 600;"><i class="fa-solid fa-check-double"></i> ซิงค์ตรงแล้ว</span>` : '')}
-                                <button class="btn btn-secondary btn-sm btn-row-toggle-excl" data-uid="${uid}" title="${isExcluded ? 'กู้คืนเป็นรายการใช้งาน' : 'ตัดรายการนี้ออก'}">
+                                <button class="btn btn-secondary btn-sm btn-row-toggle-excl" data-uid="${safeUid}" title="${isExcluded ? 'กู้คืนเป็นรายการใช้งาน' : 'ตัดรายการนี้ออก'}">
                                     <i class="fa-solid ${isExcluded ? 'fa-arrow-rotate-left text-green' : 'fa-ban text-amber'}"></i>
                                 </button>
                             </div>
@@ -917,7 +929,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
                 // Spreadsheet Full Column View
                 let trHtml = `
-                    <tr class="${rowClass}" data-uid="${uid}">
+                    <tr class="${rowClass}" data-uid="${escapeHtml(uid)}">
                         <td class="col-sticky-1" style="text-align: center; color: var(--text-muted);">${rowNum}</td>
                         <td class="col-sticky-2">${statusBadge}</td>
                 `;
@@ -936,7 +948,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         cellClass += " cell-user-edited";
                     }
 
-                    trHtml += `<td class="${cellClass}" data-col="${col}" title="ดับเบิลคลิกเพื่อแก้ไข">${val}</td>`;
+                    trHtml += `<td class="${cellClass}" data-col="${escapeHtml(col)}" title="ดับเบิลคลิกเพื่อแก้ไข">${escapeHtml(val)}</td>`;
                 });
 
                 trHtml += `</tr>`;
@@ -1128,26 +1140,32 @@ document.addEventListener("DOMContentLoaded", () => {
         const ax = rec.ax_data || {};
         const isExcl = rec.is_excluded;
 
+        const assetIdDisplay = rec.asset_id || (ax && ax.asset_id) || (rec.cells && (rec.cells["เลขที่ทรัพย์สิน"] || rec.cells["Asset_Number"])) || "-";
+        const statusDisplay = ax.ax_status || (ax.asset_id ? "ปกติ" : "ไม่พบใน ERP");
+        const empDisplay = ax.ax_emp_name ? `${ax.ax_emp_name} (${ax.ax_emp_id || ""})` : (ax.ax_emp_id || "-");
+        const deptDisplay = ax.ax_dept || "-";
+        const snDisplay = ax.ax_sn || "-";
+
         let html = `
             <div class="side-item-group">
                 <div class="side-item-label">รหัสสินทรัพย์ (Asset ID):</div>
-                <div class="side-item-val" style="color: var(--blue-primary); font-family: monospace;">${rec.asset_id || (ax && ax.asset_id) || (rec.cells && (rec.cells["เลขที่ทรัพย์สิน"] || rec.cells["Asset_Number"])) || "-"}</div>
+                <div class="side-item-val" style="color: var(--blue-primary); font-family: monospace;">${escapeHtml(assetIdDisplay)}</div>
             </div>
             <div class="side-item-group">
                 <div class="side-item-label">สถานะในระบบ ERP (AX):</div>
-                <div class="side-item-val">${ax.ax_status || (ax.asset_id ? "ปกติ" : "ไม่พบใน ERP")}</div>
+                <div class="side-item-val">${escapeHtml(statusDisplay)}</div>
             </div>
             <div class="side-item-group">
                 <div class="side-item-label">ผู้ถือครองใน ERP:</div>
-                <div class="side-item-val">${ax.ax_emp_name ? `${ax.ax_emp_name} (${ax.ax_emp_id || ""})` : (ax.ax_emp_id || "-")}</div>
+                <div class="side-item-val">${escapeHtml(empDisplay)}</div>
             </div>
             <div class="side-item-group">
                 <div class="side-item-label">แผนกใน ERP:</div>
-                <div class="side-item-val">${ax.ax_dept || "-"}</div>
+                <div class="side-item-val">${escapeHtml(deptDisplay)}</div>
             </div>
             <div class="side-item-group">
                 <div class="side-item-label">Serial Number (ERP):</div>
-                <div class="side-item-val">${ax.ax_sn || "-"}</div>
+                <div class="side-item-val">${escapeHtml(snDisplay)}</div>
             </div>
 
             <div class="side-actions-row">
@@ -1439,10 +1457,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 html += `
                     <div class="timeline-card">
                         <div class="timeline-info">
-                            <div><strong>${item.description}</strong></div>
-                            <div class="timeline-time"><i class="fa-regular fa-clock"></i> ${item.timestamp} · ${item.user}</div>
+                            <div><strong>${escapeHtml(item.description)}</strong></div>
+                            <div class="timeline-time"><i class="fa-regular fa-clock"></i> ${escapeHtml(item.timestamp)} · ${escapeHtml(item.user)}</div>
                         </div>
-                        <button class="btn btn-secondary btn-sm btn-rollback" data-idx="${item.index}">ย้อนกลับจุดนี้</button>
+                        <button class="btn btn-secondary btn-sm btn-rollback" data-idx="${escapeHtml(item.index)}">ย้อนกลับจุดนี้</button>
                     </div>
                 `;
             });
@@ -1584,15 +1602,34 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // Logs Modal
+    let cachedLogLines = [];
+
+    function renderFilteredLogs() {
+        if (!elements.logContentArea) return;
+        const q = (elements.logSearchInput ? elements.logSearchInput.value : "").trim().toLowerCase();
+        const filtered = q
+            ? cachedLogLines.filter(line => String(line).toLowerCase().includes(q))
+            : cachedLogLines;
+        elements.logContentArea.textContent = filtered.length > 0
+            ? filtered.join("\n")
+            : (q ? `ไม่พบข้อความ Log ที่ตรงกับ "${elements.logSearchInput.value.trim()}"` : "ไม่มีข้อความ Log");
+        elements.logContentArea.scrollTop = elements.logContentArea.scrollHeight;
+    }
+
     async function fetchLogs() {
         try {
             const res = await fetch("/api/logs?lines=200");
             const data = await res.json();
-            elements.logContentArea.textContent = (data.lines || []).join("\n") || "ไม่มีข้อความ Log";
-            elements.logContentArea.scrollTop = elements.logContentArea.scrollHeight;
+            cachedLogLines = data.lines || [];
+            renderFilteredLogs();
         } catch (e) {
+            cachedLogLines = [];
             elements.logContentArea.textContent = "โหลด Log ล้มเหลว";
         }
+    }
+
+    if (elements.logSearchInput) {
+        elements.logSearchInput.addEventListener("input", renderFilteredLogs);
     }
 
     elements.btnRefreshLogs.addEventListener("click", fetchLogs);

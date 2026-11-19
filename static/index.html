@@ -151,7 +151,7 @@
                                     <div class="master-stat-label">รายการสินทรัพย์หลักทั้งหมดในระบบ ERP AX</div>
                                 </div>
                                 <div class="file-sub" id="filemeta-master">ไฟล์หลักสำหรับใช้อ้างอิงและตรวจสอบความถูกต้องของทั้ง 3 หมวด</div>
-                                <div class="unified-drop-action" onclick="document.getElementById('file-input-master').click();">
+                                <div class="unified-drop-action" onclick="event.stopPropagation(); document.getElementById('file-input-master').click();">
                                     <i class="fa-solid fa-cloud-arrow-up text-green"></i>
                                     <span>คลิกหรือลากไฟล์มาวางเพื่อเปลี่ยนไฟล์ ERP</span>
                                 </div>
@@ -517,7 +517,7 @@
                                 <option value="50" selected>50</option>
                                 <option value="100">100</option>
                                 <option value="250">250</option>
-                                <option value="999999">แสดงทั้งหมด</option>
+                                <option value="100000">แสดงทั้งหมด</option>
                             </select>
                             <button class="btn-page" id="btn-grid-prev" disabled><i class="fa-solid fa-chevron-left"></i> ก่อนหน้า</button>
                             <span class="page-current" id="grid-page-current">หน้า 1 / 1</span>
